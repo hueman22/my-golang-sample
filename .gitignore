@@ -1,0 +1,17 @@
+.DS_Store
+bin/
+vendor/
+*.exe
+*.test
+*.out
+
+dist/
+coverage/
+*.coverprofile
+**/.env
+**/.envrc
+**/tmp/
+**/logs/
+node_modules/
+.vscode/
+.idea/
