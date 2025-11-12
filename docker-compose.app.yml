@@ -15,13 +15,18 @@ services:
       MYSQL_DSN: "user:pass@tcp(mysql:3306)/appdb?parseTime=true"
       PG_DSN: "postgres://user:pass@postgres:5432/appdb?sslmode=disable"
     ports:
-      - "8090:8090"
+      - "20000:8090"
     restart: unless-stopped
+    networks:
+      - appnet
 
   mysql:
     image: mysql:8.4
     environment:
       MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: appdb
+      MYSQL_USER: user
+      MYSQL_PASSWORD: pass
     ports:
       - "13306:3306"
     volumes:
@@ -33,30 +38,45 @@ services:
       timeout: 5s
       retries: 20
     restart: unless-stopped
+    networks:
+      - appnet
 
   postgres:
     image: postgres:16
+    hostname: postgres                 # <— đặt hostname rõ ràng
     environment:
-      POSTGRES_PASSWORD: root
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: appdb
     ports:
-      - "15432:5432"
+      - "15433:5432"                   # đổi nếu 15432 từng bị chiếm
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U user -d appdb"]
       interval: 10s
       timeout: 5s
       retries: 20
     restart: unless-stopped
+    networks:
+      appnet:
+        aliases:
+          - postgres                   # <— alias “postgres” trong network
 
   mailpit:
     image: axllent/mailpit:latest
     ports:
-     - "2025:1025"   # đổi cổng ngoài host -> 2025
-     - "8825:8025"  # Web UI trên host -> 8825
+      - "2025:1025"
+      - "8825:8025"
     restart: unless-stopped
+    networks:
+      - appnet
 
 volumes:
   mysql_data:
   pg_data:
+
+networks:
+  appnet:
+    driver: bridge
