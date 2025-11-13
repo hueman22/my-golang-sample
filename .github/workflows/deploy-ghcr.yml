@@ -1,0 +1,41 @@
+name: Build & Push to GHCR
+
+on:
+  push:
+    branches: [ "main" ]     # Tự động chạy khi bạn push lên nhánh main
+  workflow_dispatch:          # Cho phép chạy thủ công
+
+env:
+  REGISTRY: ghcr.io
+  GH_OWNER: hueman22
+  IMAGE_NAME: my-golang-sample-app
+
+jobs:
+  build_and_push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # Cho phép push image lên GHCR
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to GHCR using GitHub Token
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ env.GH_OWNER }} --password-stdin
+
+      - name: Build and Push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.GH_OWNER }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.GH_OWNER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Confirm build info
+        run: |
+          echo "✅ Image pushed to:"
+          echo "   ghcr.io/${{ env.GH_OWNER }}/${{ env.IMAGE_NAME }}:latest"
+          echo "   ghcr.io/${{ env.GH_OWNER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+
