@@ -1,41 +1,52 @@
-name: Build & Push to GHCR
+name: Build & Deploy to VPS using GHCR
 
 on:
   push:
-    branches: [ "main" ]     # Tự động chạy khi bạn push lên nhánh main
-  workflow_dispatch:          # Cho phép chạy thủ công
-
-env:
-  REGISTRY: ghcr.io
-  GH_OWNER: hueman22
-  IMAGE_NAME: my-golang-sample-app
+    branches: ["main"]
 
 jobs:
-  build_and_push:
+  build-and-push:
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
-      packages: write   # Cho phép push image lên GHCR
+      packages: write
+
     steps:
-      - name: Checkout code
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Login to GHCR using GitHub Token
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ env.GH_OWNER }} --password-stdin
-
-      - name: Build and Push Docker image
-        uses: docker/build-push-action@v6
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.GH_OWNER }}/${{ env.IMAGE_NAME }}:latest
-            ${{ env.REGISTRY }}/${{ env.GH_OWNER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Confirm build info
+      - name: Build Docker image
         run: |
-          echo "✅ Image pushed to:"
-          echo "   ghcr.io/${{ env.GH_OWNER }}/${{ env.IMAGE_NAME }}:latest"
-          echo "   ghcr.io/${{ env.GH_OWNER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          docker build \
+            -t ghcr.io/${{ github.repository_owner }}/my-golang-sample-app:latest \
+            .
 
+      - name: Push Docker image
+        run: |
+          docker push ghcr.io/${{ github.repository_owner }}/my-golang-sample-app:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Deploy on VPS
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "cd /opt/my-golang-sample && docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d"
+ 
