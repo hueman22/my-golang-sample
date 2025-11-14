@@ -48,5 +48,4 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            "cd /opt/my-golang-sample && docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d"
- 
+             "cd /opt/my-golang-sample && docker-compose -f docker-compose.prod.yml pull && docker-compose -f docker-compose.prod.yml up -d"
