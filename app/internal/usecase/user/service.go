@@ -6,18 +6,24 @@ import (
 	dom "example.com/my-golang-sample/app/internal/domain/user"
 )
 
-type Service struct {
-	repo dom.Repository
+type PasswordHasher interface {
+	Hash(password string) (string, error)
 }
 
-func NewService(repo dom.Repository) *Service {
-	return &Service{repo: repo}
+type Service struct {
+	repo   dom.Repository
+	hasher PasswordHasher
+}
+
+func NewService(repo dom.Repository, hasher PasswordHasher) *Service {
+	return &Service{repo: repo, hasher: hasher}
 }
 
 type CreateUserInput struct {
 	ExecutorRole dom.RoleCode
 	Name         string
 	Email        string
+	Password     string
 	RoleCode     dom.RoleCode
 }
 
@@ -26,10 +32,15 @@ type UpdateUserInput struct {
 	ID           int64
 	Name         *string
 	Email        *string
+	Password     *string
 	RoleCode     *dom.RoleCode
 }
 
 func (s *Service) CreateUser(ctx context.Context, in CreateUserInput) (*dom.User, error) {
+	if in.Password == "" {
+		return nil, dom.ErrInvalidCredential
+	}
+
 	if !in.RoleCode.IsValid() {
 		return nil, dom.ErrInvalidRoleCode
 	}
@@ -43,12 +54,17 @@ func (s *Service) CreateUser(ctx context.Context, in CreateUserInput) (*dom.User
 		return nil, err
 	}
 
+	hash, err := s.hasher.Hash(in.Password)
+	if err != nil {
+		return nil, err
+	}
+
 	u := &dom.User{
-		Name:       in.Name,
-		Email:      in.Email,
-		Password:   "$2y$12$SOME_FAKE_HASH_FOR_DEMO", // TODO: thay bằng hash thực
-		UserRoleID: roleID,
-		RoleCode:   in.RoleCode,
+		Name:         in.Name,
+		Email:        in.Email,
+		PasswordHash: hash,
+		UserRoleID:   roleID,
+		RoleCode:     in.RoleCode,
 	}
 
 	return s.repo.Create(ctx, u)
@@ -56,6 +72,10 @@ func (s *Service) CreateUser(ctx context.Context, in CreateUserInput) (*dom.User
 
 func (s *Service) GetUser(ctx context.Context, id int64) (*dom.User, error) {
 	return s.repo.GetByID(ctx, id)
+}
+
+func (s *Service) ListUsers(ctx context.Context, filter dom.ListUsersFilter) ([]*dom.User, error) {
+	return s.repo.List(ctx, filter)
 }
 
 func (s *Service) UpdateUser(ctx context.Context, in UpdateUserInput) (*dom.User, error) {
@@ -84,6 +104,13 @@ func (s *Service) UpdateUser(ctx context.Context, in UpdateUserInput) (*dom.User
 	}
 	if in.Email != nil {
 		u.Email = *in.Email
+	}
+	if in.Password != nil {
+		hash, err := s.hasher.Hash(*in.Password)
+		if err != nil {
+			return nil, err
+		}
+		u.PasswordHash = hash
 	}
 
 	return s.repo.Update(ctx, u)

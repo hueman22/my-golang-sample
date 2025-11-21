@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	dom "example.com/my-golang-sample/app/internal/domain/user"
 )
@@ -36,9 +37,12 @@ func (r *UserRepository) Create(ctx context.Context, u *dom.User) (*dom.User, er
 	res, err := r.db.ExecContext(ctx,
 		`INSERT INTO users (name, email, password_hash, user_role_id)
          VALUES (?, ?, ?, ?)`,
-		u.Name, u.Email, u.Password, u.UserRoleID,
+		u.Name, u.Email, u.PasswordHash, u.UserRoleID,
 	)
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+			return nil, dom.ErrEmailAlreadyUsed
+		}
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
@@ -56,7 +60,7 @@ func (r *UserRepository) GetByID(ctx context.Context, id int64) (*dom.User, erro
 
 	var u dom.User
 	var roleCode string
-	if err := row.Scan(&u.ID, &u.Name, &u.Email, &u.Password, &u.UserRoleID, &roleCode); err != nil {
+	if err := row.Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.UserRoleID, &roleCode); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, dom.ErrUserNotFound
 		}
@@ -71,8 +75,11 @@ func (r *UserRepository) Update(ctx context.Context, u *dom.User) (*dom.User, er
         UPDATE users
         SET name = ?, email = ?, password_hash = ?, user_role_id = ?
         WHERE id = ?
-    `, u.Name, u.Email, u.Password, u.UserRoleID, u.ID)
+    `, u.Name, u.Email, u.PasswordHash, u.UserRoleID, u.ID)
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+			return nil, dom.ErrEmailAlreadyUsed
+		}
 		return nil, err
 	}
 
@@ -94,4 +101,55 @@ func (r *UserRepository) Delete(ctx context.Context, id int64) error {
 		return dom.ErrUserNotFound
 	}
 	return nil
+}
+
+func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*dom.User, error) {
+	row := r.db.QueryRowContext(ctx, `
+        SELECT u.id, u.name, u.email, u.password_hash, u.user_role_id, r.code
+        FROM users u
+        JOIN user_roles r ON u.user_role_id = r.id
+        WHERE u.email = ?
+    `, email)
+
+	var u dom.User
+	var roleCode string
+	if err := row.Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.UserRoleID, &roleCode); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, dom.ErrUserNotFound
+		}
+		return nil, err
+	}
+	u.RoleCode = dom.RoleCode(roleCode)
+	return &u, nil
+}
+
+func (r *UserRepository) List(ctx context.Context, filter dom.ListUsersFilter) ([]*dom.User, error) {
+	query := `
+        SELECT u.id, u.name, u.email, u.password_hash, u.user_role_id, r.code
+        FROM users u
+        JOIN user_roles r ON u.user_role_id = r.id
+    `
+	args := []any{}
+	if filter.RoleCode != nil {
+		query += ` WHERE r.code = ?`
+		args = append(args, string(*filter.RoleCode))
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []*dom.User
+	for rows.Next() {
+		var u dom.User
+		var roleCode string
+		if err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.UserRoleID, &roleCode); err != nil {
+			return nil, err
+		}
+		u.RoleCode = dom.RoleCode(roleCode)
+		users = append(users, &u)
+	}
+	return users, nil
 }

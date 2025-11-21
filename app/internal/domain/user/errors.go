@@ -3,6 +3,9 @@ package user
 import "errors"
 
 var (
-	ErrUserNotFound     = errors.New("user not found")
-	ErrCannotAssignRole = errors.New("cannot assign role")
+	ErrUserNotFound      = errors.New("user not found")
+	ErrCannotAssignRole  = errors.New("cannot assign role")
+	ErrEmailAlreadyUsed  = errors.New("email already used")
+	ErrUnauthorized      = errors.New("unauthorized")
+	ErrInvalidCredential = errors.New("invalid credential")
 )
