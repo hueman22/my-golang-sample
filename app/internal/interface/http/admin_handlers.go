@@ -2,12 +2,15 @@ package http
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
 	domcategory "example.com/my-golang-sample/app/internal/domain/category"
 	domorder "example.com/my-golang-sample/app/internal/domain/order"
 	domproduct "example.com/my-golang-sample/app/internal/domain/product"
 	domuser "example.com/my-golang-sample/app/internal/domain/user"
 	domrole "example.com/my-golang-sample/app/internal/domain/userrole"
+	categoryuc "example.com/my-golang-sample/app/internal/usecase/category"
 	useruc "example.com/my-golang-sample/app/internal/usecase/user"
 	userroleuc "example.com/my-golang-sample/app/internal/usecase/userrole"
 )
@@ -24,7 +27,12 @@ type updateRoleRequest struct {
 }
 
 func (a *API) handleListUserRoles(w http.ResponseWriter, r *http.Request) {
-	roles, err := a.roleSvc.List(r.Context(), domrole.ListFilter{})
+	filter := domrole.ListFilter{}
+	if q := strings.TrimSpace(r.URL.Query().Get("q")); q != "" {
+		filter.Query = &q
+	}
+
+	roles, err := a.roleSvc.List(r.Context(), filter)
 	if err != nil {
 		handleDomainError(w, err)
 		return
@@ -108,7 +116,17 @@ type updateUserRequest struct {
 }
 
 func (a *API) handleListUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := a.userSvc.ListUsers(r.Context(), domuser.ListUsersFilter{})
+	filter := domuser.ListUsersFilter{}
+	if roleCode := strings.TrimSpace(r.URL.Query().Get("role_code")); roleCode != "" {
+		role, err := domuser.ParseRoleCode(roleCode)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err)
+			return
+		}
+		filter.RoleCode = &role
+	}
+
+	users, err := a.userSvc.ListUsers(r.Context(), filter)
 	if err != nil {
 		handleDomainError(w, err)
 		return
@@ -224,13 +242,24 @@ func (a *API) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 }
 
 type categoryRequest struct {
-	Name        string `json:"name" validate:"required"`
-	Description string `json:"description"`
-	IsActive    bool   `json:"is_active"`
+	Name        string  `json:"name" validate:"required"`
+	Slug        *string `json:"slug"`
+	Description string  `json:"description"`
+	IsActive    *bool   `json:"is_active"`
 }
 
 func (a *API) handleListCategories(w http.ResponseWriter, r *http.Request) {
-	categories, err := a.categorySvc.List(r.Context(), domcategory.ListFilter{})
+	filter := domcategory.ListFilter{}
+	if onlyActive := strings.TrimSpace(r.URL.Query().Get("only_active")); onlyActive != "" {
+		val, err := strconv.ParseBool(onlyActive)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err)
+			return
+		}
+		filter.OnlyActive = val
+	}
+
+	categories, err := a.categorySvc.List(r.Context(), filter)
 	if err != nil {
 		handleDomainError(w, err)
 		return
@@ -249,8 +278,9 @@ func (a *API) handleCreateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	category, err := a.categorySvc.Create(r.Context(), &domcategory.Category{
+	category, err := a.categorySvc.Create(r.Context(), categoryuc.CreateInput{
 		Name:        req.Name,
+		Slug:        req.Slug,
 		Description: req.Description,
 		IsActive:    req.IsActive,
 	})
@@ -273,10 +303,11 @@ func (a *API) handleUpdateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	category, err := a.categorySvc.Update(r.Context(), &domcategory.Category{
+	category, err := a.categorySvc.Update(r.Context(), categoryuc.UpdateInput{
 		ID:          id,
-		Name:        req.Name,
-		Description: req.Description,
+		Name:        &req.Name,
+		Slug:        req.Slug,
+		Description: &req.Description,
 		IsActive:    req.IsActive,
 	})
 	if err != nil {
@@ -297,6 +328,20 @@ func (a *API) handleDeleteCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) handleGetCategory(w http.ResponseWriter, r *http.Request) {
+	id, err := parseIDParam(r, "id")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	category, err := a.categorySvc.GetByID(r.Context(), id)
+	if err != nil {
+		handleDomainError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, mapCategory(category))
 }
 
 type productRequest struct {
@@ -421,4 +466,3 @@ func (a *API) handleUpdateOrderStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, mapOrder(order))
 }
-

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	dom "example.com/my-golang-sample/app/internal/domain/user"
+	domrole "example.com/my-golang-sample/app/internal/domain/userrole"
 )
 
 type UserRepository struct {
@@ -26,7 +27,7 @@ func (r *UserRepository) GetRoleIDByCode(ctx context.Context, code dom.RoleCode)
 	).Scan(&id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, fmt.Errorf("role not found: %s", code)
+			return 0, fmt.Errorf("role not found: %w", domrole.ErrRoleNotFound)
 		}
 		return 0, err
 	}

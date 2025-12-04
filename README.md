@@ -1,107 +1,421 @@
-## Ecommerce Backend (Golang + MySQL/PostgreSQL)
+# Ecommerce Backend API
 
-REST API phục vụ bài toán ecommerce nhỏ, triển khai theo phong cách DDD + SOLID, handler mỏng – service chứa business logic – repository chỉ làm việc với DB. Ứng dụng chạy trong Docker (MySQL + PostgreSQL) hoặc chạy trực tiếp trên máy dev.
+REST API backend for a simple ecommerce application built with Go (Golang) and MySQL, following Domain-Driven Design (DDD).
+The project implements authentication, role-based access control, admin management features, and customer shopping flows
+from product browsing to cart and checkout.
 
-### 1. Kiến trúc & Thư mục chính
-- `app/main.go`: entrypoint, DI wiring, health check, seed SUPER_ADMIN.
-- `app/internal/domain/*`: entity + rule của từng bounded context (`user`, `userrole`, `category`, `product`, `cart`, `order`…).
-- `app/internal/usecase/*`: service layer/ứng dụng, xử lý validate + business rule.
-- `app/internal/infra/persistence/mysql`: repository MySQL cho từng domain.
-- `app/internal/infra/security`: BCrypt password service + JWT service.
-- `app/internal/interface/http`: router (chi), middleware JWT, handler REST cho admin/user/guest.
+## Overview
 
-Luồng xử lý: HTTP handler (decode + validate) → usecase service (logic, DI) → repository (SQL) → MySQL. JWT middleware nạp context user để enforce role.
+This project provides:
 
-### 2. Environment & Docker
-1. **Tạo file env**
-   ```bash
-   cp app/env.example app/.env
-   # hoặc export thủ công: export $(grep -v '^#' app/.env | xargs)
-   ```
-   Các biến quan trọng:
-   - `APP_PORT`: port HTTP của Go app.
-   - `MYSQL_DSN`, `PG_DSN`: connection string tới container DB.
-   - `JWT_SECRET`: khóa ký JWT (HS256).
-   - `SUPER_ADMIN_EMAIL` + `SUPER_ADMIN_PASSWORD`: dùng để seed tài khoản SUPER_ADMIN đầu tiên.
+- **DDD architecture** (domain → usecase → infra → http)
+- **JWT authentication** and **role-based authorization**
+- **Admin features** to manage user roles, users, categories, products, and orders
+- **Customer features** to browse products, manage a cart, and checkout (COD/TAMARA)
+- **Unit tests** for usecases and **HTTP feature tests** for handlers
 
-2. **Chạy docker-compose**
-   ```bash
-   docker compose -f docker-compose.app.yml up -d mysql postgres mailpit
-   docker compose -f docker-compose.app.yml up --build app
-   ```
-   - MySQL listen `13306`, Postgres `15433`, app publish `20000`.
-   - File init SQL nằm ở `docker/mysql/init.sql` và `docker/postgres/init.sql`.
+Only features that are actually implemented in this repository (and defined in `app/EPIC_ecommerce_backend.md`) are documented.
 
-3. **Chạy app ngoài Docker**
-   ```bash
-   cd app
-   export $(grep -v '^#' .env | xargs)   # nếu dùng file env
-   go run ./...
-   ```
+## Features
 
-### 3. Database migration & seed
-- `ensureTables` trong `main.go` tự động tạo bảng `user_roles`, `users`, `categories`, `products`, `cart_items`, `orders`, `order_items`.
-- Bảng `user_roles` được seed 3 role mặc định: `SUPER_ADMIN`, `ADMIN`, `CUSTOMER`.
-- Hàm `seedSuperAdmin` sẽ tạo user SUPER_ADMIN (nếu chưa tồn tại) dựa trên `SUPER_ADMIN_EMAIL/PASSWORD`.
-- Khi cần migrate thủ công chỉ cần chạy `go run ./app` sau khi cập nhật schema, vì hàm ensureTables luôn idempotent.
+- **Auth Login**
+  - `POST /api/v1/auth/login` with email and password
+  - Returns a JWT token containing user ID and role information
 
-### 4. Chức năng REST (tóm tắt)
-- **Guest/User**
-  - `POST /api/v1/auth/login`
-  - `GET /api/v1/products`, `GET /api/v1/products/{id}`
-  - `POST /api/v1/me/cart/items`, `GET /api/v1/me/cart`
-  - `POST /api/v1/me/checkout` (`payment_method`: `COD` hoặc `TAMARA`)
-- **Admin/Super Admin (`Authorization: Bearer <JWT>`):**
-  - CRUD `user-roles`, `users`, `categories`, `products`
-  - `GET /api/v1/admin/orders`, `GET /api/v1/admin/orders/{id}`, `PATCH /api/v1/admin/orders/{id}/status`
-  - Chính sách quan trọng:
-    - ADMIN **không được** tạo/promote user có `role_code = ADMIN`.
-    - Vi phạm trả HTTP 422, không thay đổi DB.
-    - SUPER_ADMIN không bị giới hạn.
+- **User Roles**
+  - Admin CRUD for user roles
+  - Role codes are validated and fixed via the domain rules
+  - Used for access control across the system
 
-### 5. Quy trình kiểm thử
+- **Users**
+  - Admin CRUD for users
+  - Email must be unique
+  - Role assignment rules:
+    - **ADMIN is NOT allowed to create or update users with `role_code = ADMIN`**
+    - **ONLY SUPER_ADMIN can create or update users with `role_code = ADMIN`**
+
+- **Categories**
+  - Admin CRUD for product categories
+
+- **Products**
+  - Admin CRUD for products
+  - Public product browsing (guest and customer)
+
+- **Cart**
+  - Authenticated customers can add products to their cart
+  - View current cart contents
+
+- **Checkout**
+  - Authenticated customers can checkout their cart
+  - Supported payment methods: `COD`, `TAMARA`
+  - Creates orders and order_items from the cart and clears the cart on success
+
+- **Orders (Admin)**
+  - Admin can list all orders
+  - Admin can view the details of an order
+  - Admin can update the status of an order
+
+- **Access Control Rules**
+  - All `/api/v1/admin/*` endpoints require a valid JWT and role `ADMIN` or `SUPER_ADMIN`
+  - Customers and guests cannot call admin endpoints
+
+## Architecture (DDD)
+
+The project is organized into clear layers:
+
+```text
+app/
+├── main.go                         # Entrypoint, DI wiring, DB setup, HTTP server
+├── internal/
+│   ├── domain/                     # Domain models and domain errors
+│   │   ├── user/                   # User entity, RoleCode, policies
+│   │   ├── userrole/               # UserRole domain
+│   │   ├── category/               # Category domain
+│   │   ├── product/                # Product domain
+│   │   ├── cart/                   # Cart domain
+│   │   └── order/                  # Order domain
+│   ├── usecase/                    # Application services (business rules)
+│   │   ├── auth/                   # Login
+│   │   ├── user/                   # Users
+│   │   ├── userrole/               # User roles
+│   │   ├── category/               # Categories
+│   │   ├── product/                # Products
+│   │   ├── cart/                   # Cart
+│   │   ├── checkout/               # Checkout
+│   │   └── order/                  # Orders
+│   ├── infra/
+│   │   ├── persistence/mysql/      # MySQL repositories
+│   │   └── security/               # JWT + password hashing
+│   └── interface/http/             # HTTP layer (chi router, handlers, middleware)
+│       ├── api.go                  # Router and route registration
+│       ├── middleware.go           # Auth middleware and role enforcement
+│       ├── auth_handlers.go        # Login
+│       ├── admin_handlers.go       # Admin (roles, users, categories, products, orders)
+│       ├── product_handlers.go     # Public product browsing
+│       └── cart_handlers.go        # Cart + checkout
+```
+
+### Request Flow
+
+```text
+HTTP Request
+  → HTTP Handler (decode JSON, basic validation)
+  → Usecase Service (business rules)
+  → Repository Interface
+  → MySQL Repository Implementation
+  → MySQL Database
+```
+
+## Getting Started
+
+### Prerequisites
+
+- Go 1.21+ (for local development)
+- Docker and Docker Compose (for MySQL and/or running the app in a container)
+
+### Local Run
+
+From the repository root:
+
+```bash
+git clone <repository-url>
+cd my-golang-sample
+```
+
+1. **Start MySQL via Docker**
+
+```bash
+docker compose -f docker-compose.app.yml up -d mysql
+```
+
+2. **Configure environment**
+
 ```bash
 cd app
-GOPROXY=direct GOSUMDB=off GOMODCACHE=$(pwd)/.gocache GOCACHE=$(pwd)/.gocache-build \
-  go test ./...
+cp env.example .env
+# Edit .env as needed (MYSQL_DSN, APP_PORT, JWT_SECRET, SUPER_ADMIN_*).
+export $(grep -v '^#' .env | xargs)
 ```
-- `internal/usecase/user/service_test.go`: unit test mock repo → kiểm tra rule phân quyền.
-- `internal/interface/http/admin_users_handler_test.go`: feature test dùng `httptest` → ADMIN tạo user role ADMIN phải nhận 422.
 
-### 6. Ví dụ curl
+3. **Run the application**
+
 ```bash
-# Login (nhận JWT)
+go run ./...
+```
+
+The app listens on `APP_PORT` (from `.env`). When using Docker (see below), port `20000` on the host maps to the app port in the container.
+
+## Docker Run
+
+To run the app and database using Docker:
+
+```bash
+docker compose -f docker-compose.app.yml up -d mysql
+docker compose -f docker-compose.app.yml up --build app
+```
+
+- App: `http://localhost:20000`
+- MySQL: `localhost:13306` (user: `user`, password: `pass`, DB: `appdb`)
+
+## Database Seed
+
+On startup, `main.go`:
+
+1. Ensures core tables exist:
+   - `user_roles`, `users`, `categories`, `products`, `cart_items`, `orders`, `order_items`
+2. Inserts default roles into `user_roles`:
+   - `SUPER_ADMIN`, `ADMIN`, `CUSTOMER`
+3. Seeds a `SUPER_ADMIN` user if:
+   - `SUPER_ADMIN_EMAIL` and `SUPER_ADMIN_PASSWORD` are provided, and
+   - no user with that email already exists.
+
+No manual migrations are required for this sample; table creation and basic seeding are done in code.
+
+## API Routes Summary
+
+Only implemented routes are listed here.
+
+### Root Endpoint (Important)
+
+| Method | Endpoint | Description              |
+|--------|----------|--------------------------|
+| `GET`  | `/`      | Welcome JSON message     |
+
+The root endpoint `"/"` is implemented in `main.go` and **must not be modified**.
+
+### Auth
+
+| Method | Endpoint               | Description                  |
+|--------|------------------------|------------------------------|
+| `POST` | `/api/v1/auth/login`   | Login, returns JWT token     |
+
+### Public Product Browsing
+
+| Method | Endpoint                    | Description               |
+|--------|-----------------------------|---------------------------|
+| `GET`  | `/api/v1/products`          | List products             |
+| `GET`  | `/api/v1/products/{id}`     | Get product by ID         |
+
+### Customer (Authenticated)
+
+Requires `Authorization: Bearer <token>` and a logged-in user.
+
+| Method | Endpoint                    | Description                  |
+|--------|-----------------------------|------------------------------|
+| `GET`  | `/api/v1/me/cart`           | Get current user cart        |
+| `POST` | `/api/v1/me/cart/items`     | Add item to cart             |
+| `POST` | `/api/v1/me/checkout`       | Checkout cart (COD/TAMARA)   |
+
+### Admin (ADMIN or SUPER_ADMIN)
+
+All admin endpoints are prefixed with `/api/v1/admin` and require a valid JWT with role `ADMIN` or `SUPER_ADMIN`.
+
+**User Roles**
+
+- `GET  /api/v1/admin/user-roles`
+- `POST /api/v1/admin/user-roles`
+- `GET  /api/v1/admin/user-roles/{id}`
+- `PUT  /api/v1/admin/user-roles/{id}`
+- `DELETE /api/v1/admin/user-roles/{id}`
+
+**Users**
+
+- `GET  /api/v1/admin/users`
+- `POST /api/v1/admin/users`
+- `GET  /api/v1/admin/users/{id}`
+- `PUT  /api/v1/admin/users/{id}`
+- `DELETE /api/v1/admin/users/{id}`
+
+**Categories**
+
+- `GET  /api/v1/admin/categories`
+- `POST /api/v1/admin/categories`
+- `GET  /api/v1/admin/categories/{id}`
+- `PUT  /api/v1/admin/categories/{id}`
+- `DELETE /api/v1/admin/categories/{id}`
+
+**Products**
+
+- `GET  /api/v1/admin/products`
+- `POST /api/v1/admin/products`
+- `PUT  /api/v1/admin/products/{id}`
+- `DELETE /api/v1/admin/products/{id}`
+
+**Orders**
+
+- `GET   /api/v1/admin/orders`
+- `GET   /api/v1/admin/orders/{id}`
+- `PATCH /api/v1/admin/orders/{id}` (update status)
+
+## Testing Guide (Unit + Feature)
+
+From the `app` directory:
+
+```bash
+cd app
+go test ./... -v
+```
+
+### Unit Tests (Usecase Layer)
+
+- Located in `app/internal/usecase/*/*_test.go`
+- Use fake/in-memory repositories (no real DB)
+- Cover business rules for:
+  - Auth
+  - User roles
+  - Users
+  - Categories
+  - Products
+  - Cart
+  - Checkout
+  - Orders
+
+Examples:
+
+```bash
+go test ./internal/usecase/user -v
+go test ./internal/usecase/cart -v
+go test ./internal/usecase/checkout -v
+```
+
+### HTTP Feature Tests
+
+- Located in `app/internal/interface/http/*_handler_test.go`
+- Use `httptest` and the real router
+- Cover:
+  - Login
+  - Admin users & roles
+  - Products (guest + admin)
+  - Cart + checkout flows
+  - Admin orders
+
+Example:
+
+```bash
+go test ./internal/interface/http -v
+```
+
+## Smoke Tests
+
+After running the app (locally or via Docker), you can do quick checks:
+
+### 1. Root
+
+```bash
+curl http://localhost:20000/
+curl http://localhost:20000/?name=Developer
+```
+
+### 2. Login
+
+```bash
 curl -X POST http://localhost:20000/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"super.admin@example.com","password":"ChangeMe123!"}'
-
-# ADMIN cố tạo user role ADMIN => 422
-curl -X POST http://localhost:20000/api/v1/admin/users \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Another Admin","email":"admin2@example.com","password":"Admin123!","role_code":"ADMIN"}'
-
-# SUPER_ADMIN tạo user ADMIN => 201
-curl -X POST http://localhost:20000/api/v1/admin/users \
-  -H "Authorization: Bearer $SUPER_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Admin OK","email":"admin.ok@example.com","password":"Super123!","role_code":"ADMIN"}'
 ```
 
-### 7. Phân quyền chi tiết
-- `SUPER_ADMIN`: full quyền CRUD + quản lý roles/users/orders.
-- `ADMIN`: giống SUPER_ADMIN nhưng **không** thể tạo hoặc cập nhật user lên `ADMIN`.
-- `CUSTOMER`: login, xem sản phẩm, quản lý giỏ hàng, checkout (COD/TAMARA mock).
+### 3. Products
 
-### 8. Troubleshooting
-- **Không tải được module Go**: kéo bằng `GOPROXY=direct GOSUMDB=off GOINSECURE=github.com,...` như script ở phần test.
-- **Seed SUPER_ADMIN không chạy**: kiểm tra env `SUPER_ADMIN_EMAIL/PASSWORD` và log khởi động.
-- **422 khi tạo user**: kiểm tra role executor và `role_code` target theo rule đã mô tả.
-- **Checkout lỗi**: đảm bảo sản phẩm còn stock và giỏ hàng không trống (`cart_items`).
+```bash
+curl http://localhost:20000/api/v1/products
+```
 
-### 9. Tiếp tục phát triển
-- Thêm refresh token/rotate secret.
-- Hoàn thiện Postgres storage (hiện Postgres chỉ dùng cho health-check/demo DSN).
-- Viết migration tool (golang-migrate) để quản lý schema ngoài code.
+### 4. Admin Users (Requires TOKEN from login)
+
+```bash
+export TOKEN=your-jwt-token
+
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:20000/api/v1/admin/users
+```
+
+### 5. Cart & Checkout (Customer)
+
+```bash
+# Add item to cart
+curl -X POST http://localhost:20000/api/v1/me/cart/items \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"product_id":1,"quantity":1}'
+
+# View cart
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:20000/api/v1/me/cart
+
+# Checkout
+curl -X POST http://localhost:20000/api/v1/me/checkout \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"payment_method":"COD"}'
+```
+
+## Commands
+
+### Development
+
+```bash
+cd app
+
+# Run app
+go run ./...
+
+# Run all tests
+go test ./... -v
+```
+
+### Docker
+
+```bash
+# Start MySQL
+docker compose -f docker-compose.app.yml up -d mysql
+
+# Start app
+docker compose -f docker-compose.app.yml up --build app
+
+# Stop everything
+docker compose -f docker-compose.app.yml down
+```
+
+## Security
+
+### Authentication
+
+- Login via `POST /api/v1/auth/login`
+- JWT contains user ID and role code
+- JWT required for:
+  - `/api/v1/me/*` (customer features)
+  - `/api/v1/admin/*` (admin features)
+
+### Access Control Rules
+
+- **SUPER_ADMIN**
+  - Full access to admin APIs
+  - Can create/update users with any role (including ADMIN)
+- **ADMIN**
+  - Access to admin APIs, but:
+  - **Cannot create or update users with `role_code = ADMIN`**
+- **CUSTOMER**
+  - Can browse products, manage cart, and checkout
+  - Cannot access admin routes
+- **GUEST**
+  - Can browse products and access the root endpoint
+
+If the role assignment rule is violated (e.g. ADMIN tries to create another ADMIN),
+the usecase returns an error and **no change is persisted**.
+
+## Contribution Rules
+
+- Keep business logic in `internal/usecase/*`
+- Keep HTTP handlers thin (decode → validate → call usecase)
+- Add or update unit tests when changing usecases
+- Add or update HTTP feature tests when changing handlers or routes
+- Ensure `go test ./...` passes before committing
+
+**Important:**  
+Do **not** modify the root `"/"` endpoint in `main.go`. It is required by the project and must remain stable.
+
+## License
+
+Add your license information here (for example: MIT, Apache 2.0, etc.).
 
 

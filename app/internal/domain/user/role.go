@@ -1,6 +1,10 @@
 package user
 
-import "errors"
+import (
+	"errors"
+	"regexp"
+	"strings"
+)
 
 // RoleCode là "enum" đại diện cho các quyền trong hệ thống
 type RoleCode string
@@ -11,14 +15,11 @@ const (
 	RoleCodeCustomer   RoleCode = "CUSTOMER"
 )
 
+var roleCodeRegexp = regexp.MustCompile(`^[A-Z0-9_]{3,64}$`)
+
 // Kiểm tra xem role có hợp lệ không
 func (c RoleCode) IsValid() bool {
-	switch c {
-	case RoleCodeSuperAdmin, RoleCodeAdmin, RoleCodeCustomer:
-		return true
-	default:
-		return false
-	}
+	return roleCodeRegexp.MatchString(string(c))
 }
 
 // Helper: có phải SUPER_ADMIN không
@@ -36,7 +37,7 @@ var ErrInvalidRoleCode = errors.New("invalid role code")
 
 // ParseRoleCode: convert từ string (từ request / DB) sang RoleCode (có validate)
 func ParseRoleCode(s string) (RoleCode, error) {
-	c := RoleCode(s)
+	c := RoleCode(strings.ToUpper(strings.TrimSpace(s)))
 	if !c.IsValid() {
 		return "", ErrInvalidRoleCode
 	}

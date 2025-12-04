@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -152,6 +153,7 @@ func ensureTables(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS categories (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR(255) NOT NULL,
+            slug VARCHAR(255) NOT NULL UNIQUE,
             description TEXT NULL,
             is_active TINYINT(1) NOT NULL DEFAULT 1,
             created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
@@ -215,7 +217,51 @@ func ensureTables(db *sql.DB) error {
 		}
 	}
 
+	if err := ensureCategorySlug(db); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func ensureCategorySlug(db *sql.DB) error {
+	if _, err := db.Exec(`ALTER TABLE categories ADD COLUMN slug VARCHAR(255) NOT NULL DEFAULT '' AFTER name`); err != nil {
+		if !isDuplicateColumnErr(err) {
+			return err
+		}
+	}
+
+	if _, err := db.Exec(`UPDATE categories SET slug = LOWER(REPLACE(name, ' ', '-')) WHERE slug IS NULL OR slug = ''`); err != nil {
+		return err
+	}
+
+	if _, err := db.Exec(`ALTER TABLE categories ADD UNIQUE KEY uniq_categories_slug (slug)`); err != nil {
+		if !isDuplicateKeyErr(err) {
+			return err
+		}
+	}
+
+	if _, err := db.Exec(`ALTER TABLE categories MODIFY COLUMN slug VARCHAR(255) NOT NULL`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "unknown column") {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func isDuplicateColumnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "duplicate column name")
+}
+
+func isDuplicateKeyErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "duplicate key name")
 }
 
 func seedSuperAdmin(db *sql.DB, hasher interface{ Hash(string) (string, error) }, email, password string) error {

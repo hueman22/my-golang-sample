@@ -95,6 +95,7 @@ func (a *API) Router() chi.Router {
 				admin.Route("/user-roles", func(rr chi.Router) {
 					rr.Get("/", a.handleListUserRoles)
 					rr.Post("/", a.handleCreateUserRole)
+					rr.Get("/{id}", a.handleGetUserRole)
 					rr.Put("/{id}", a.handleUpdateUserRole)
 					rr.Delete("/{id}", a.handleDeleteUserRole)
 				})
@@ -110,6 +111,7 @@ func (a *API) Router() chi.Router {
 				admin.Route("/categories", func(rr chi.Router) {
 					rr.Get("/", a.handleListCategories)
 					rr.Post("/", a.handleCreateCategory)
+					rr.Get("/{id}", a.handleGetCategory)
 					rr.Put("/{id}", a.handleUpdateCategory)
 					rr.Delete("/{id}", a.handleDeleteCategory)
 				})
@@ -124,7 +126,7 @@ func (a *API) Router() chi.Router {
 				admin.Route("/orders", func(rr chi.Router) {
 					rr.Get("/", a.handleListOrders)
 					rr.Get("/{id}", a.handleGetOrder)
-					rr.Patch("/{id}/status", a.handleUpdateOrderStatus)
+					rr.Patch("/{id}", a.handleUpdateOrderStatus)
 				})
 			})
 		})
@@ -184,6 +186,7 @@ func mapCategory(c *domcategory.Category) map[string]any {
 	return map[string]any{
 		"id":          c.ID,
 		"name":        c.Name,
+		"slug":        c.Slug,
 		"description": c.Description,
 		"is_active":   c.IsActive,
 	}
@@ -245,7 +248,12 @@ func handleDomainError(w http.ResponseWriter, err error) {
 		errors.Is(err, domuser.ErrInvalidRoleCode),
 		errors.Is(err, domuser.ErrInvalidCredential):
 		respondError(w, http.StatusUnprocessableEntity, err)
-	case errors.Is(err, domuser.ErrEmailAlreadyUsed):
+	case errors.Is(err, domcategory.ErrCategoryInvalidName),
+		errors.Is(err, domcategory.ErrCategoryInvalidSlug):
+		respondError(w, http.StatusUnprocessableEntity, err)
+	case errors.Is(err, domcategory.ErrCategorySlugExists),
+		errors.Is(err, domrole.ErrRoleCodeExisted),
+		errors.Is(err, domuser.ErrEmailAlreadyUsed):
 		respondError(w, http.StatusConflict, err)
 	case errors.Is(err, domuser.ErrUserNotFound),
 		errors.Is(err, domrole.ErrRoleNotFound),
@@ -255,6 +263,15 @@ func handleDomainError(w http.ResponseWriter, err error) {
 		respondError(w, http.StatusNotFound, err)
 	case errors.Is(err, domuser.ErrUnauthorized):
 		respondError(w, http.StatusUnauthorized, err)
+	case errors.Is(err, domrole.ErrRoleImmutable),
+		errors.Is(err, domrole.ErrRoleInUse),
+		errors.Is(err, domorder.ErrEmptyOrderItems),
+		errors.Is(err, domorder.ErrInvalidPayment),
+		errors.Is(err, domorder.ErrCheckoutValidation),
+		errors.Is(err, domorder.ErrInvalidStatus),
+		errors.Is(err, domproduct.ErrOutOfStock):
+		// Lỗi nghiệp vụ khi checkout/cart → 422
+		respondError(w, http.StatusUnprocessableEntity, err)
 	default:
 		respondError(w, http.StatusInternalServerError, err)
 	}

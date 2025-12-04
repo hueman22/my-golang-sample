@@ -23,7 +23,7 @@ func (r *UserRoleRepository) Create(ctx context.Context, role *domrole.UserRole)
 	res, err := r.db.ExecContext(ctx, `
         INSERT INTO user_roles (code, name, description)
         VALUES (?, ?, ?)
-    `, role.Code, role.Name, role.Description)
+    `, string(role.Code), role.Name, role.Description)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			return nil, domrole.ErrRoleCodeExisted
@@ -51,7 +51,35 @@ func (r *UserRoleRepository) Update(ctx context.Context, role *domrole.UserRole)
 }
 
 func (r *UserRoleRepository) Delete(ctx context.Context, id int64) error {
-	res, err := r.db.ExecContext(ctx, `DELETE FROM user_roles WHERE id = ? AND is_system = 0`, id)
+	var isSystem bool
+	err := r.db.QueryRowContext(ctx, `
+        SELECT is_system = 1
+        FROM user_roles
+        WHERE id = ?
+    `, id).Scan(&isSystem)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domrole.ErrRoleNotFound
+		}
+		return err
+	}
+	if isSystem {
+		return domrole.ErrRoleImmutable
+	}
+
+	var inUse bool
+	if err := r.db.QueryRowContext(ctx, `
+        SELECT EXISTS(
+            SELECT 1 FROM users WHERE user_role_id = ? LIMIT 1
+        )
+    `, id).Scan(&inUse); err != nil {
+		return err
+	}
+	if inUse {
+		return domrole.ErrRoleInUse
+	}
+
+	res, err := r.db.ExecContext(ctx, `DELETE FROM user_roles WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}

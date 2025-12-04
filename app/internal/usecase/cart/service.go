@@ -14,6 +14,7 @@ type CartRepository interface {
 }
 
 type ProductRepository interface {
+	GetByID(ctx context.Context, id int64) (*domproduct.Product, error)
 	GetByIDs(ctx context.Context, ids []int64) ([]*domproduct.Product, error)
 }
 
@@ -39,6 +40,29 @@ func (s *Service) AddToCart(ctx context.Context, userID, productID int64, quanti
 	if quantity <= 0 {
 		return errors.New("quantity must be positive")
 	}
+
+	product, err := s.productRepo.GetByID(ctx, productID)
+	if err != nil {
+		return err
+	}
+
+	if !product.IsActive {
+		return domproduct.ErrProductNotFound
+	}
+
+	currentItems, _ := s.cartRepo.ListItems(ctx, userID)
+	var currentQuantity int64
+	for _, item := range currentItems {
+		if item.ProductID == productID {
+			currentQuantity = item.Quantity
+			break
+		}
+	}
+
+	if currentQuantity+quantity > product.Stock {
+		return domproduct.ErrOutOfStock
+	}
+
 	return s.cartRepo.AddOrUpdateItem(ctx, userID, productID, quantity)
 }
 
@@ -111,4 +135,3 @@ func (s *Service) Checkout(ctx context.Context, userID int64, method domorder.Pa
 
 	return order, nil
 }
-

@@ -12,7 +12,7 @@ type addCartItemRequest struct {
 }
 
 type checkoutRequest struct {
-	PaymentMethod string `json:"payment_method" validate:"required"`
+	PaymentMethod string `json:"payment_method" validate:"required,oneof=TAMARA COD"`
 }
 
 func (a *API) handleAddCartItem(w http.ResponseWriter, r *http.Request) {
