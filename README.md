@@ -30,9 +30,7 @@ Only features that are actually implemented in this repository (and defined in `
 - **Users**
   - Admin CRUD for users
   - Email must be unique
-  - Role assignment rules:
-    - **ADMIN is NOT allowed to create or update users with `role_code = ADMIN`**
-    - **ONLY SUPER_ADMIN can create or update users with `role_code = ADMIN`**
+  - Role assignment follows strict RBAC policies (see RBAC Policy section below)
 
 - **Categories**
   - Admin CRUD for product categories
@@ -55,9 +53,68 @@ Only features that are actually implemented in this repository (and defined in `
   - Admin can view the details of an order
   - Admin can update the status of an order
 
-- **Access Control Rules**
+- **Access Control**
   - All `/api/v1/admin/*` endpoints require a valid JWT and role `ADMIN` or `SUPER_ADMIN`
   - Customers and guests cannot call admin endpoints
+  - RBAC policies enforce role assignment restrictions (see RBAC Policy section)
+
+## RBAC Policy
+
+### Role Assignment Rule
+
+**ADMIN users cannot create or update users with `role_code = ADMIN`. Only SUPER_ADMIN can perform these operations.**
+
+#### Business Rule
+
+This policy prevents privilege escalation by ensuring that ADMIN users cannot create or promote other users to ADMIN role. This maintains a clear hierarchy where only SUPER_ADMIN has the authority to manage ADMIN-level users.
+
+#### Affected Endpoints
+
+The following admin user management endpoints enforce this rule:
+
+- `POST /api/v1/admin/users` - Create user
+- `PUT /api/v1/admin/users/{id}` - Update user
+
+#### HTTP Response Behavior
+
+When an ADMIN user attempts to create or update a user with `role_code = ADMIN`:
+
+- **Status Code:** `422 Unprocessable Entity`
+- **Response Body:**
+  ```json
+  {
+    "error": "cannot assign role"
+  }
+  ```
+- **Behavior:** No database changes are made (transaction is not committed)
+
+When a SUPER_ADMIN performs the same operation:
+
+- **Status Code:** `201 Created` (for POST) or `200 OK` (for PUT)
+- **Response Body:** Returns the created/updated user object with `role_code = "ADMIN"`
+
+#### Testing
+
+This rule is covered by:
+
+- **Unit Tests:** `app/internal/usecase/user/service_admin_role_rule_test.go`
+  - Tests the business logic at the usecase layer
+  - Verifies repository methods are not called when the rule is violated
+
+- **HTTP Feature Tests:** `app/internal/interface/http/admin_user_handler_role_rule_test.go`
+  - Tests the full HTTP request/response cycle
+  - Verifies correct status codes and error messages
+  - Tests both ADMIN (blocked) and SUPER_ADMIN (allowed) scenarios
+
+Run the tests:
+
+```bash
+# Unit tests
+go test ./internal/usecase/user -run TestAdminRoleRule -v
+
+# HTTP feature tests
+go test ./internal/interface/http -run TestAdmin.*RoleRule -v
+```
 
 ## Architecture (DDD)
 
@@ -259,40 +316,56 @@ go test ./... -v
 ### Unit Tests (Usecase Layer)
 
 - Located in `app/internal/usecase/*/*_test.go`
-- Use fake/in-memory repositories (no real DB)
+- Use fake/in-memory repositories (no real database)
+- Test business logic in isolation
 - Cover business rules for:
-  - Auth
-  - User roles
-  - Users
-  - Categories
-  - Products
-  - Cart
-  - Checkout
-  - Orders
+  - Auth (login, token generation)
+  - User roles (CRUD, validation)
+  - Users (CRUD, role assignment policies, email uniqueness)
+  - Categories (CRUD, slug generation)
+  - Products (CRUD, validation, stock management)
+  - Cart (add items, retrieve cart, user isolation)
+  - Checkout (payment methods, order creation)
+  - Orders (status management, listing)
 
 Examples:
 
 ```bash
+# Run all usecase tests
+go test ./internal/usecase/... -v
+
+# Run specific usecase tests
 go test ./internal/usecase/user -v
 go test ./internal/usecase/cart -v
 go test ./internal/usecase/checkout -v
+
+# Run tests with coverage
+go test ./internal/usecase/user -v -cover
 ```
 
 ### HTTP Feature Tests
 
 - Located in `app/internal/interface/http/*_handler_test.go`
-- Use `httptest` and the real router
+- Use `httptest.NewRecorder` and `http.NewRequest` to test real HTTP handlers
+- Test the full request/response cycle including middleware
 - Cover:
-  - Login
-  - Admin users & roles
-  - Products (guest + admin)
-  - Cart + checkout flows
-  - Admin orders
+  - **Auth:** Login endpoint, JWT token generation
+  - **Admin Users:** CRUD operations, role assignment policies, authorization
+  - **Admin Roles:** CRUD operations for user roles
+  - **Products:** Guest browsing and admin management
+  - **Cart:** Add items, retrieve cart, user isolation
+  - **Checkout:** Payment methods (COD/TAMARA), order creation
+  - **Admin Orders:** List, view details, update status
 
-Example:
+Examples:
 
 ```bash
+# Run all HTTP feature tests
 go test ./internal/interface/http -v
+
+# Run specific handler tests
+go test ./internal/interface/http -run TestAdminCreateUser -v
+go test ./internal/interface/http -run TestCheckout -v
 ```
 
 ## Smoke Tests
@@ -325,8 +398,15 @@ curl http://localhost:20000/api/v1/products
 ```bash
 export TOKEN=your-jwt-token
 
+# List users (requires ADMIN or SUPER_ADMIN)
 curl -H "Authorization: Bearer $TOKEN" \
   http://localhost:20000/api/v1/admin/users
+
+# Create user (ADMIN cannot create ADMIN - see RBAC Policy)
+curl -X POST http://localhost:20000/api/v1/admin/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"New User","email":"user@example.com","password":"pass123","role_code":"CUSTOMER"}'
 ```
 
 ### 5. Cart & Checkout (Customer)
@@ -380,39 +460,66 @@ docker compose -f docker-compose.app.yml down
 
 ### Authentication
 
-- Login via `POST /api/v1/auth/login`
-- JWT contains user ID and role code
+- Login via `POST /api/v1/auth/login` with email and password
+- Returns a JWT token containing:
+  - User ID
+  - Role code (`SUPER_ADMIN`, `ADMIN`, `CUSTOMER`)
+  - Email and name
 - JWT required for:
   - `/api/v1/me/*` (customer features)
   - `/api/v1/admin/*` (admin features)
 
-### Access Control Rules
+### Authorization & Access Control
+
+#### Role Permissions
 
 - **SUPER_ADMIN**
-  - Full access to admin APIs
+  - Full access to all admin APIs
   - Can create/update users with any role (including ADMIN)
+  - Can manage all resources (users, roles, categories, products, orders)
+
 - **ADMIN**
-  - Access to admin APIs, but:
-  - **Cannot create or update users with `role_code = ADMIN`**
+  - Access to admin APIs for managing resources
+  - **Cannot create or update users with `role_code = ADMIN`** (see RBAC Policy section)
+  - Can create/update users with other roles (CUSTOMER, etc.)
+
 - **CUSTOMER**
-  - Can browse products, manage cart, and checkout
-  - Cannot access admin routes
-- **GUEST**
-  - Can browse products and access the root endpoint
+  - Can browse products (public endpoints)
+  - Can manage cart and checkout
+  - Cannot access admin routes (returns 401/403)
 
-If the role assignment rule is violated (e.g. ADMIN tries to create another ADMIN),
-the usecase returns an error and **no change is persisted**.
+- **GUEST** (unauthenticated)
+  - Can browse products
+  - Can access the root endpoint
+  - Cannot access protected routes
 
-## Contribution Rules
+#### Enforcement
 
-- Keep business logic in `internal/usecase/*`
-- Keep HTTP handlers thin (decode → validate → call usecase)
-- Add or update unit tests when changing usecases
-- Add or update HTTP feature tests when changing handlers or routes
+- Role-based access is enforced at the middleware level (`authMiddleware` and `requireRoles`)
+- Business rules (e.g., ADMIN cannot create ADMIN) are enforced at the usecase layer
+- When a rule is violated, the usecase returns an error and **no database changes are persisted**
+
+## Contribution Guidelines
+
+### Code Organization
+
+- Keep business logic in `internal/usecase/*` (usecase layer)
+- Keep HTTP handlers thin (decode → validate → call usecase → respond)
+- Domain models and business rules belong in `internal/domain/*`
+- Infrastructure concerns (database, security) in `internal/infra/*`
+
+### Testing Requirements
+
+- **Unit Tests:** Add or update tests in `app/internal/usecase/*/*_test.go` when changing usecases
+- **HTTP Feature Tests:** Add or update tests in `app/internal/interface/http/*_handler_test.go` when changing handlers or routes
 - Ensure `go test ./...` passes before committing
+- Use fake/in-memory repositories for unit tests (no real database)
 
-**Important:**  
-Do **not** modify the root `"/"` endpoint in `main.go`. It is required by the project and must remain stable.
+### Important Notes
+
+- **Do not modify** the root `"/"` endpoint in `main.go`. It is required by the project and must remain stable.
+- Follow the existing DDD structure and naming conventions
+- Maintain consistency with existing error handling and response formats
 
 ## License
 

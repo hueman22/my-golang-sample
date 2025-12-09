@@ -246,7 +246,9 @@ func handleDomainError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, domuser.ErrCannotAssignRole),
 		errors.Is(err, domuser.ErrInvalidRoleCode),
-		errors.Is(err, domuser.ErrInvalidCredential):
+		errors.Is(err, domuser.ErrInvalidCredential),
+		errors.Is(err, domuser.ErrAdminCannotCreateAdmin),
+		errors.Is(err, domuser.ErrAdminCannotPromoteAdmin):
 		respondError(w, http.StatusUnprocessableEntity, err)
 	case errors.Is(err, domcategory.ErrCategoryInvalidName),
 		errors.Is(err, domcategory.ErrCategoryInvalidSlug):

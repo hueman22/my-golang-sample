@@ -45,6 +45,13 @@ func (s *Service) CreateUser(ctx context.Context, in CreateUserInput) (*dom.User
 		return nil, dom.ErrInvalidRoleCode
 	}
 
+	// Business rule: ADMIN cannot create users with ADMIN role
+	if in.ExecutorRole == dom.RoleCodeAdmin && in.RoleCode == dom.RoleCodeAdmin {
+		// Rule đặc biệt: admin không được tạo admin
+		return nil, dom.ErrCannotAssignRole
+	}
+
+	// General RBAC rule: check executor có quyền gán role này không
 	if !dom.CanAssignRole(in.ExecutorRole, in.RoleCode) {
 		return nil, dom.ErrCannotAssignRole
 	}
@@ -85,12 +92,22 @@ func (s *Service) UpdateUser(ctx context.Context, in UpdateUserInput) (*dom.User
 	}
 
 	if in.RoleCode != nil {
+		// validate role code
 		if !in.RoleCode.IsValid() {
 			return nil, dom.ErrInvalidRoleCode
 		}
+
+		// Business rule: ADMIN cannot update users to ADMIN role
+		if in.ExecutorRole == dom.RoleCodeAdmin && *in.RoleCode == dom.RoleCodeAdmin {
+			// Rule đặc biệt: admin không được promote lên admin
+			return nil, dom.ErrCannotAssignRole
+		}
+
+		// General RBAC rule
 		if !dom.CanAssignRole(in.ExecutorRole, *in.RoleCode) {
 			return nil, dom.ErrCannotAssignRole
 		}
+
 		roleID, err := s.repo.GetRoleIDByCode(ctx, *in.RoleCode)
 		if err != nil {
 			return nil, err
